@@ -1,5 +1,7 @@
 # Neurotoken
 
+[![Tests](https://github.com/jeffmichaeljohnson-tech/neurotoken/actions/workflows/test.yml/badge.svg)](https://github.com/jeffmichaeljohnson-tech/neurotoken/actions/workflows/test.yml)
+
 Adaptive thinking allocation for Claude Code.
 
 Neurotoken is a zero-dependency prompt scoring engine that classifies every Claude Code prompt on two independent axes — **complexity** (reasoning difficulty) and **stakes** (impact of a wrong answer) — and recommends one of 11 model/effort tiers from `haiku/low` to `opus/max`. It runs as a [UserPromptSubmit hook](https://docs.anthropic.com/en/docs/claude-code/hooks) in under 100ms with no external dependencies.
