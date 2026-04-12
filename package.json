@@ -1,0 +1,32 @@
+{
+  "name": "neurotoken",
+  "version": "1.0.0",
+  "description": "Adaptive thinking allocation for Claude Code — scores prompts on complexity and stakes to recommend model/effort tiers",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/test-scoring.mjs tests/test-edge-cases.mjs"
+  },
+  "keywords": [
+    "claude-code",
+    "llm",
+    "adaptive",
+    "thinking",
+    "prompt-scoring",
+    "hooks",
+    "model-selection",
+    "developer-tools"
+  ],
+  "author": "Jeff Michael Johnson",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeffmichaeljohnson-tech/neurotoken.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jeffmichaeljohnson-tech/neurotoken/issues"
+  },
+  "homepage": "https://github.com/jeffmichaeljohnson-tech/neurotoken#readme",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

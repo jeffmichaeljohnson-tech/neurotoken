@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# Temporary
+*.tmp
+.cache/
