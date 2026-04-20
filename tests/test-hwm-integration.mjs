@@ -1,120 +1,218 @@
 #!/usr/bin/env node
 
-// Integration tests for the HWM (high-water mark) path in neurotoken-scorer.mjs.
-// The HWM logic lives in the scorer (not the signals lib), so these tests spawn
-// the scorer as a subprocess with a dedicated TMPDIR and seeded HWM state.
+// ── Neurotoken HWM Integration Tests ─────────────────────────────
+// Subprocess-based tests that exercise the full scorer pipeline
+// with seeded HWM state in an isolated TMPDIR.
 // Run with: node --test tests/test-hwm-integration.mjs
+// ────────────────────────────────────────────────────────────────────
 
-import { describe, it, before, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { writeFileSync, mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const SCORER = resolve(__dirname, '..', 'src', 'neurotoken-scorer.mjs');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const SCORER_PATH = join(__dirname, '..', 'src', 'neurotoken-scorer.mjs');
 
-function runScorer(prompt, { hwm, tmpDir }) {
-  if (hwm) writeFileSync(join(tmpDir, 'neurotoken-hwm.json'), JSON.stringify(hwm));
-  const res = spawnSync('node', [SCORER], {
-    input: JSON.stringify({ prompt }),
-    env: { ...process.env, NEUROTOKEN_MODE: 'active', TMPDIR: tmpDir },
-    encoding: 'utf8',
-  });
-  if (res.status !== 0) throw new Error(`scorer exited ${res.status}: ${res.stderr}`);
-  if (!res.stdout.trim()) return { annotation: '', tier: null };
-  const json = JSON.parse(res.stdout);
-  const annotation = json.hookSpecificOutput.additionalContext;
-  const match = annotation.match(/→ (\S+)/);
-  return { annotation, tier: match ? match[1] : null };
+const TIER_ORDER = [
+  'haiku/low', 'haiku/med', 'haiku/high',
+  'sonnet/low', 'sonnet/med', 'sonnet/high', 'sonnet/max',
+  'opus/low', 'opus/med', 'opus/high', 'opus/max',
+];
+
+function runScorer(prompt, opts = {}) {
+  const isolatedTmp = opts.tmpDir || mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
+  const hwmPath = join(isolatedTmp, 'neurotoken-hwm.json');
+  if (opts.hwm) writeFileSync(hwmPath, JSON.stringify(opts.hwm));
+
+  const env = {
+    ...process.env,
+    TMPDIR: isolatedTmp,
+    NEUROTOKEN_MODE: opts.mode || 'active',
+    NEUROTOKEN_SESSION: opts.session || 'test',
+  };
+
+  let stdout = '';
+  try {
+    stdout = execFileSync('node', [SCORER_PATH], {
+      input: JSON.stringify({ prompt }), env, timeout: 5000, encoding: 'utf8',
+    });
+  } catch (err) {
+    if (err.stdout) stdout = err.stdout;
+  }
+
+  const logPath = join(isolatedTmp, 'neurotoken-log.jsonl');
+  let logEntry = null;
+  if (existsSync(logPath)) {
+    const lines = readFileSync(logPath, 'utf8').trim().split('\n');
+    logEntry = JSON.parse(lines[lines.length - 1]);
+  }
+  let hwmAfter = null;
+  if (existsSync(hwmPath)) hwmAfter = JSON.parse(readFileSync(hwmPath, 'utf8'));
+
+  let annotation = '';
+  if (stdout.trim()) {
+    try {
+      annotation = JSON.parse(stdout).hookSpecificOutput.additionalContext;
+    } catch { /* shadow mode or non-JSON */ }
+  }
+
+  return { stdout, annotation, logEntry, hwmAfter, tmpDir: isolatedTmp };
 }
 
-describe('HWM integration — baseline behavior', () => {
-  let tmp;
-  before(() => { tmp = mkdtempSync(join(tmpdir(), 'nt-hwm-')); });
-  after(() => rmSync(tmp, { recursive: true, force: true }));
+function cleanup(tmpDir) {
+  try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ }
+}
 
-  it('follow-up "ok do it" inherits HWM floor when no override is present', () => {
-    const { tier, annotation } = runScorer('ok do it', {
-      tmpDir: tmp,
-      hwm: { score: 8, ts: Date.now() },
-    });
-    assert.notStrictEqual(tier, 'haiku/low',
-      `expected HWM-boosted tier, got ${annotation}`);
-    assert.ok(annotation.includes('hwm decay'),
-      `expected hwm annotation, got ${annotation}`);
+
+// ── Baseline ────────────────────────────────────────────────────
+
+describe('HWM baseline behavior', () => {
+  it('terse follow-up within 3 min inherits HWM', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
+    try {
+      const hwm = { score: 10, ts: Date.now() - 3 * 60_000 };
+      const result = runScorer('ok do it', { tmpDir, hwm });
+      assert.strictEqual(result.logEntry.hwm_applied, true);
+      assert.notStrictEqual(result.logEntry.tier, 'haiku/low');
+    } finally { cleanup(tmpDir); }
+  });
+
+  it('HWM is written after scoring', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
+    try {
+      const result = runScorer('rename a variable', { tmpDir });
+      assert.ok(result.hwmAfter !== null);
+      assert.strictEqual(typeof result.hwmAfter.score, 'number');
+      assert.strictEqual(typeof result.hwmAfter.ts, 'number');
+    } finally { cleanup(tmpDir); }
   });
 });
 
-describe('HWM integration — override bypasses HWM floor', () => {
-  it('"quick answer" on trivial prompt bypasses a high HWM', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'nt-hwm-'));
+
+// ── Session-start pollution fix ─────────────────────────────────
+
+describe('HWM session-start pollution — fresh task prompts must not inherit stale HWM', () => {
+  it('HWM 15 min ago + fresh task prompt → no HWM; tier matches intrinsic', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
     try {
-      const { tier, annotation } = runScorer('quick answer: what time is it', {
-        tmpDir: tmp,
-        hwm: { score: 6, ts: Date.now() },
+      const hwm = { score: 10, ts: Date.now() - 15 * 60_000 };
+      const result = runScorer('launch the app on the simulator', { tmpDir, hwm });
+      assert.strictEqual(result.logEntry.hwm_applied, false);
+      assert.strictEqual(result.logEntry.tier, 'haiku/low');
+    } finally { cleanup(tmpDir); }
+  });
+
+  it('HWM 3 min ago + terse "ok do it" → HWM applies', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
+    try {
+      const hwm = { score: 10, ts: Date.now() - 3 * 60_000 };
+      const result = runScorer('ok do it', { tmpDir, hwm });
+      assert.strictEqual(result.logEntry.hwm_applied, true);
+      assert.notStrictEqual(result.logEntry.tier, 'haiku/low');
+    } finally { cleanup(tmpDir); }
+  });
+
+  it('HWM 15 min ago + terse "ok do it" → absolute expiry kills HWM', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
+    try {
+      const hwm = { score: 10, ts: Date.now() - 15 * 60_000 };
+      const result = runScorer('ok do it', { tmpDir, hwm });
+      assert.strictEqual(result.logEntry.hwm_applied, false);
+    } finally { cleanup(tmpDir); }
+  });
+
+  it('HWM 3 min ago + fresh "Launch PrayerMap..." → no HWM (exact bug scenario)', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
+    try {
+      const hwm = { score: 10, ts: Date.now() - 3 * 60_000 };
+      const result = runScorer(
+        'Launch PrayerMap on both the iOS simulator and the watchOS simulator, please.',
+        { tmpDir, hwm }
+      );
+      assert.strictEqual(result.logEntry.hwm_applied, false);
+      const tierIdx = TIER_ORDER.indexOf(result.logEntry.tier);
+      assert.ok(tierIdx <= 2, `fresh launch prompt should be haiku-tier, got ${result.logEntry.tier}`);
+    } finally { cleanup(tmpDir); }
+  });
+
+  it('HWM 4 min ago + fresh task prompt → no HWM', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
+    try {
+      const hwm = { score: 8, ts: Date.now() - 4 * 60_000 };
+      const result = runScorer('check the build logs for errors', { tmpDir, hwm });
+      assert.strictEqual(result.logEntry.hwm_applied, false);
+    } finally { cleanup(tmpDir); }
+  });
+
+  it('HWM 7 min ago + fresh task prompt → no HWM (past 5-min decay)', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
+    try {
+      const hwm = { score: 10, ts: Date.now() - 7 * 60_000 };
+      const result = runScorer('run the test suite', { tmpDir, hwm });
+      assert.strictEqual(result.logEntry.hwm_applied, false);
+    } finally { cleanup(tmpDir); }
+  });
+
+  it('terse "yes" within 2 min inherits HWM', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
+    try {
+      const hwm = { score: 8, ts: Date.now() - 2 * 60_000 };
+      const result = runScorer('yes', { tmpDir, hwm });
+      assert.strictEqual(result.logEntry.hwm_applied, true);
+    } finally { cleanup(tmpDir); }
+  });
+
+  it('terse "proceed" within 4 min inherits HWM', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
+    try {
+      const hwm = { score: 9, ts: Date.now() - 4 * 60_000 };
+      const result = runScorer('proceed', { tmpDir, hwm });
+      assert.strictEqual(result.logEntry.hwm_applied, true);
+    } finally { cleanup(tmpDir); }
+  });
+});
+
+
+// ── Override bypasses HWM ──────────────────────────────────────
+
+describe('HWM integration — user override bypasses HWM floor', () => {
+  it('"quick answer" on trivial prompt bypasses a high HWM', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
+    try {
+      const result = runScorer('quick answer: what time is it', {
+        tmpDir, hwm: { score: 6, ts: Date.now() },
       });
-      assert.strictEqual(tier, 'haiku/low',
-        `override should bypass HWM; got ${annotation}`);
-      assert.ok(!annotation.includes('hwm decay'),
-        `hwm should have been skipped; got ${annotation}`);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+      assert.strictEqual(result.logEntry.tier, 'haiku/low');
+      assert.strictEqual(result.logEntry.hwm_applied, false);
+    } finally { cleanup(tmpDir); }
   });
 
   it('"think harder" on trivial prompt uses intrinsic+override, not HWM+override', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'nt-hwm-'));
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
     try {
-      const { tier, annotation } = runScorer('rename a variable, think harder', {
-        tmpDir: tmp,
-        hwm: { score: 9, ts: Date.now() },
+      const result = runScorer('rename a variable, think harder', {
+        tmpDir, hwm: { score: 9, ts: Date.now() },
       });
       // Intrinsic haiku/low (0) + "think harder" (+2) = haiku/high (2).
-      // If HWM had applied, it would have been opus/high (9) + 2 = opus/max (10).
-      assert.strictEqual(tier, 'haiku/high',
-        `override should bypass HWM; expected haiku/high, got ${annotation}`);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+      // With HWM it would have been opus/high (9) + 2 = opus/max (10).
+      assert.strictEqual(result.logEntry.tier, 'haiku/high');
+    } finally { cleanup(tmpDir); }
   });
 
-  it('de-escalation override on intrinsically high-stakes prompt still respects intrinsic stakes', () => {
-    // "deploy to production, quick answer" — intrinsic score is already high
-    // from the stakes keywords. Bypassing HWM does NOT crash this to haiku/low,
-    // because the intrinsic tier is already elevated by modifiers.
-    const tmp = mkdtempSync(join(tmpdir(), 'nt-hwm-'));
+  it('de-escalation override on intrinsically high-stakes prompt preserves stakes floor', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'neurotoken-test-'));
     try {
-      const { tier, annotation } = runScorer('deploy to production, quick answer', {
-        tmpDir: tmp,
-        hwm: { score: 10, ts: Date.now() },
+      const result = runScorer('deploy to production, quick answer', {
+        tmpDir, hwm: { score: 10, ts: Date.now() },
       });
-      const TIER_ORDER = ['haiku/low','haiku/med','haiku/high','sonnet/low','sonnet/med',
-                          'sonnet/high','sonnet/max','opus/low','opus/med','opus/high','opus/max'];
-      const idx = TIER_ORDER.indexOf(tier);
+      const idx = TIER_ORDER.indexOf(result.logEntry.tier);
       assert.ok(idx >= TIER_ORDER.indexOf('sonnet/med'),
-        `intrinsic prod-deploy stakes should keep tier >= sonnet/med, got ${annotation}`);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-});
-
-describe('HWM integration — decay and expiry', () => {
-  it('HWM older than 5 minutes is ignored entirely', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'nt-hwm-'));
-    try {
-      const sixMinAgo = Date.now() - 6 * 60_000;
-      const { tier, annotation } = runScorer('ok do it', {
-        tmpDir: tmp,
-        hwm: { score: 10, ts: sixMinAgo },
-      });
-      assert.strictEqual(tier, 'haiku/low',
-        `expired HWM should not affect tier; got ${annotation}`);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+        `prod-deploy stakes should keep tier >= sonnet/med, got ${result.logEntry.tier}`);
+    } finally { cleanup(tmpDir); }
   });
 });
