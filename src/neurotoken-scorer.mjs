@@ -43,19 +43,29 @@ try {
   // which includes the HWM floor below.
   const override = detectUserOverride(text);
 
-  // High-water mark — decaying floor over 5 minutes.
-  // Skipped when the user explicitly overrides: "quick answer" should not be
-  // silently upgraded because a prior prompt in the session was high-stakes.
+  // High-water mark — decaying floor over 5 minutes, absolute expiry at 10 min.
+  // Gated so only terse follow-ups ("ok do it", "yes", "proceed") inherit weight
+  // from prior turns — fresh-task prompts set their own weight. Also skipped when
+  // the user explicitly overrides: "quick answer" should not be silently upgraded.
   let usedHwm = false;
   let hwmTs = Date.now();  // default for new HWM entries
   let hwmOriginalTier = null;
-  let intrinsicTierIndex = tierIndex;  // save before HWM boost
+  const intrinsicTierIndex = tierIndex;  // save before HWM boost
   const hwmPath = join(tmpdir(), 'neurotoken-hwm.json');
+
+  const TERSE_FOLLOWUPS = /^(ok|okay|yes|yep|yeah|sure|go|do it|proceed|continue|go ahead|sounds good|lgtm|ship it|confirmed|approved|right|correct|exactly|perfect|fine|great|please|thanks|y|k)\b/i;
+  const isTerseFollowup = text.length < 40 && TERSE_FOLLOWUPS.test(text);
+
   if (existsSync(hwmPath) && !override) {
     try {
       const hwm = JSON.parse(readFileSync(hwmPath, 'utf8'));
       const elapsed = Date.now() - hwm.ts;
-      if (elapsed < 5 * 60_000 && tierIndex < hwm.score) {
+      const HWM_DECAY_WINDOW = 5 * 60_000;
+      const HWM_ABSOLUTE_EXPIRY = 10 * 60_000;
+      const hwmValid = elapsed < HWM_ABSOLUTE_EXPIRY
+        && elapsed < HWM_DECAY_WINDOW
+        && isTerseFollowup;
+      if (hwmValid && tierIndex < hwm.score) {
         const decay = Math.ceil(elapsed / 60_000) || 1;  // at least 1
         const decayedScore = hwm.score - decay;
         if (decayedScore > tierIndex) {
