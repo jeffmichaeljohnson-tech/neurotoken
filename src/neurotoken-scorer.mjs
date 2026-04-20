@@ -39,13 +39,19 @@ try {
   const s = bucket(rawStakes);
   let tierIndex = MATRIX[c][s];
 
-  // High-water mark — decaying floor over 5 minutes
+  // Detect user override up-front — it takes precedence over automated scoring,
+  // which includes the HWM floor below.
+  const override = detectUserOverride(text);
+
+  // High-water mark — decaying floor over 5 minutes.
+  // Skipped when the user explicitly overrides: "quick answer" should not be
+  // silently upgraded because a prior prompt in the session was high-stakes.
   let usedHwm = false;
   let hwmTs = Date.now();  // default for new HWM entries
   let hwmOriginalTier = null;
   let intrinsicTierIndex = tierIndex;  // save before HWM boost
   const hwmPath = join(tmpdir(), 'neurotoken-hwm.json');
-  if (existsSync(hwmPath)) {
+  if (existsSync(hwmPath) && !override) {
     try {
       const hwm = JSON.parse(readFileSync(hwmPath, 'utf8'));
       const elapsed = Date.now() - hwm.ts;
@@ -65,7 +71,6 @@ try {
   // Modifiers and user overrides
   const { shift: modShift, mods } = computeModifiers(text);
   tierIndex = clamp(tierIndex + modShift);
-  const override = detectUserOverride(text);
   if (override) tierIndex = clamp(tierIndex + override.shift);
 
   // Persist — only refresh timestamp if this prompt's own score is the new high
