@@ -56,6 +56,47 @@ The hook detects these AND you should honor them directly. User overrides bypass
 
 Raw scores (C=X S=Y) are always visible in the injected context. If the user challenges a classification ("that was actually trivial" or "this is more critical than you think"), acknowledge the mismatch, adjust your behavior for the current response, and note it.
 
+## Ceiling-Rule Mode (opt-in, v1.1.0+)
+
+Neurotoken's default behavior enforces a **floor rule**: the agent's frontmatter model/effort is the minimum tier, and Neurotoken can only escalate upward. Ceiling-rule mode inverts this. The global model becomes the **ceiling**, and Neurotoken can route downward to cheaper models when scoring justifies it.
+
+### Opting in
+
+Set the environment variable:
+
+```
+NEUROTOKEN_MODE=active-ceiling
+```
+
+All other modes (`shadow`, `active`, `off`) retain their existing behavior. The floor rule remains the default if no mode is specified.
+
+### Annotation format
+
+In ceiling mode, when a downgrade is permitted, the annotation includes explicit provenance:
+
+```
+[neurotoken] C=1 S=0 → sonnet/med (downgrade OK from opus/max)
+```
+
+The `(downgrade OK from X)` suffix signals to the orchestrator that dispatching to a lower-tier agent is safe for this prompt. When no downgrade is permitted, the annotation omits this suffix and behaves identically to floor-rule mode.
+
+### Safety guards
+
+Downgrade permission is **never** emitted when any of the following modifiers fire during scoring:
+
+- **`+auth`** -- authentication or authorization logic
+- **`+deploy`** -- deployment or infrastructure changes
+- **`+finance`** -- financial data or transactions
+- **`+production`** -- production environment modifications
+
+When any of these modifiers are present, the annotation locks to the agent's configured tier regardless of raw C/S scores. This prevents cost optimization from overriding safety on high-stakes operations.
+
+### Orchestrator interpretation
+
+When an orchestrator reads a `[neurotoken]` line containing `(downgrade OK from X)`, it MAY select an agent at the recommended tier rather than the invoker's default. For example, if the invoker runs at opus/max but the annotation recommends sonnet/med with downgrade permission, the orchestrator may dispatch to a sonnet-class agent.
+
+If the orchestrator has no agent at the recommended tier, it should use the closest available tier at or below the ceiling. The orchestrator must never dispatch above the ceiling tier.
+
 ## Limitations
 
 1. **Advisory only**: This system injects text recommendations. It cannot programmatically change the running model or effort level. The real actuator is orchestrator dispatch -- the orchestrator reads the recommendation and selects appropriate agents. In interactive (non-orchestrated) sessions, Claude adjusts reasoning depth based on the recommendation, but enforcement depends on Claude honoring the guidance.
