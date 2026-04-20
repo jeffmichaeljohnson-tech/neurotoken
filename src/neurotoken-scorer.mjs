@@ -18,6 +18,11 @@ if (mode === 'off') process.exit(0);
 
 const clamp = (v) => Math.max(0, Math.min(10, v));
 
+// Ceiling-rule mode (v1.1.0+): when NEUROTOKEN_MODE=active-ceiling, permit
+// downgrade to cheaper models for low-tier work. The ceiling (user's global
+// model) defaults to opus/max; override via NEUROTOKEN_CEILING.
+const CEILING_MODS = new Set(['+auth', '+deploy', '+finance', '+cross-project']);
+
 try {
   // Read and validate input
   const { prompt } = JSON.parse(readFileSync('/dev/stdin', 'utf8'));
@@ -96,19 +101,35 @@ try {
   if (override) annotation += ` (user: ${override.shift > 0 ? '+' : ''}${override.shift} "${override.phrase}")`;
   if (usedHwm && hwmOriginalTier !== null) annotation += ` (hwm decay: ${TIER_ORDER[intrinsicTierIndex]} → ${TIER_ORDER[tierIndex]})`;
 
-  // Log to JSONL (always, both modes)
+  // Ceiling-rule mode: compute whether downgrade is permitted.
+  // Safety guard: any of +auth/+deploy/+finance/+cross-project OR S=3 blocks downgrade.
+  let downgradeOk = false;
+  let ceilingTier = null;
+  if (mode === 'active-ceiling') {
+    ceilingTier = process.env.NEUROTOKEN_CEILING || 'opus/max';
+    const ceilingIdx = TIER_ORDER.indexOf(ceilingTier);
+    const hasSafetyMod = mods.some(m => CEILING_MODS.has(m));
+    const criticalStakes = s === 3;
+    if (ceilingIdx >= 0 && tierIndex < ceilingIdx && !hasSafetyMod && !criticalStakes) {
+      downgradeOk = true;
+      annotation += ` (downgrade OK from ${ceilingTier})`;
+    }
+  }
+
+  // Log to JSONL (always, all modes)
   appendFileSync(join(tmpdir(), 'neurotoken-log.jsonl'), JSON.stringify({
     ts: new Date().toISOString(), mode,
     session: process.env.NEUROTOKEN_SESSION || '?',
     prompt_preview: prompt.slice(0, 80),
     c, s, raw_c: rawComplexity, raw_s: rawStakes,
     tier: recommendation, mods, verb: verb.verb, hwm_applied: usedHwm,
+    downgrade_ok: downgradeOk, ceiling: ceilingTier,
   }) + '\n');
 
   // Shadow mode: log only, no output
   if (mode === 'shadow') process.exit(0);
 
-  // Active mode: inject context into Claude Code
+  // Active / active-ceiling: inject context into Claude Code
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'UserPromptSubmit',

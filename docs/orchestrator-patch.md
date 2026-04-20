@@ -11,7 +11,7 @@ Use the two-axis score (Complexity × Stakes) to select agents and calibrate res
 
 **Rules:**
 1. **Floor rule (default)**: Agent frontmatter model/effort is the minimum. Neurotokens escalate, never downgrade. If the neurotoken tier exceeds all available agents, the orchestrator handles the task directly.
-2. **Ceiling rule (opt-in, v1.1.0+)**: When `NEUROTOKEN_MODE=active-ceiling` is set and the `[neurotoken]` annotation contains `(downgrade OK from X)`, the orchestrator MAY dispatch to a lower-tier agent than the invoker's default. Downgrade is **blocked** when any of these modifiers fire: `+auth`, `+deploy`, `+finance`, `+production`. When blocked, treat the annotation as floor-rule behavior.
+2. **Ceiling rule (opt-in, v1.1.0+)**: When `NEUROTOKEN_MODE=active-ceiling` is set and the `[neurotoken]` annotation contains `(downgrade OK from X)`, the orchestrator MAY dispatch to a lower-tier agent than the invoker's default. Downgrade is **blocked** when any of these fire: `+auth`, `+deploy`, `+finance`, `+cross-project`, or `S=3` (critical stakes). When blocked, the annotation omits the downgrade suffix and behaves like floor-rule mode.
 3. **Subagent handoff**: Include the `[neurotoken]` recommendation in the subagent task description -- subagents don't inherit parent hook context.
 4. **Multi-step tasks**: Score the overall task at the highest component tier. If step 1 is haiku/low but step 3 is opus/high, the orchestrating agent runs at opus/high.
 5. **Override respect**: If the user says "think harder" or "quick answer", the neurotoken annotation reflects this -- honor it.
