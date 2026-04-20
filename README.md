@@ -100,19 +100,38 @@ The installer copies hook files to `~/.claude/hooks/` and the policy document to
 
 | Variable | Values | Default | Purpose |
 |---|---|---|---|
-| `NEUROTOKEN_MODE` | `shadow`, `active`, `off` | `shadow` | Shadow logs without injecting; active injects recommendations |
+| `NEUROTOKEN_MODE` | `shadow`, `active`, `active-ceiling`, `off` | `shadow` | Shadow logs without injecting; active injects recommendations; active-ceiling also permits downgrade (v1.1.0+) |
+| `NEUROTOKEN_CEILING` | Tier name like `opus/max` | `opus/max` | In ceiling mode, the maximum tier the orchestrator may dispatch to |
 | `NEUROTOKEN_SESSION` | `A`, `B`, etc. | `?` | Tags log entries for A/B testing |
 | `NEUROTOKEN_PROJECTS` | Comma-separated names | (empty) | Project names for +cross-project modifier detection |
 
 Start with `NEUROTOKEN_MODE=shadow` to validate scoring before activating.
 
+## Ceiling-Rule Mode (v1.1.0+)
+
+The default mode is safety-first: Neurotoken only escalates, never downgrades. If you want **cost optimization** — set your global model to Opus and let Neurotoken route low-complexity work to Haiku/Sonnet — opt into `active-ceiling` mode.
+
+```bash
+# In settings.json env
+NEUROTOKEN_MODE=active-ceiling
+NEUROTOKEN_CEILING=opus/max
+```
+
+In this mode, when the scored tier is safely below the ceiling AND none of the safety guards fire, the annotation includes an explicit downgrade permission:
+
+```
+[neurotoken] C=0 S=0 → haiku/low (downgrade OK from opus/max)
+```
+
+Your orchestrator agent reads this and dispatches to a lower-tier subagent. **Downgrade is blocked** when any of these fire: `+auth`, `+deploy`, `+finance`, `+cross-project`, or `S=3`. In those cases the annotation omits the downgrade suffix and behaves like floor-rule mode. See `docs/ADR-001-ceiling-rule.md` for the full design rationale.
+
 ## Testing
 
 ```bash
-node --test tests/test-scoring.mjs tests/test-edge-cases.mjs
+npm test
 ```
 
-109 tests across 22 suites covering bucket math, matrix constants, scoring, verb detection, context dampening, modifiers, user overrides, edge cases (false escalation, false de-escalation, context disambiguation, boundary conditions), and code block stripping. Zero external dependencies — uses Node.js built-in test runner.
+183 tests across 29 suites covering bucket math, matrix constants, scoring, verb detection, context dampening, modifiers, user overrides, edge cases, HWM integration, imperative-extraction patterns, ceiling-mode semantics, and adversarial safety-modifier detection. Zero external dependencies — uses Node.js built-in test runner.
 
 ## Architecture
 
@@ -125,12 +144,18 @@ neurotoken/
       neurotoken-signals.mjs    # Signal definitions, matrix, scoring functions
       normalize.mjs             # Text normalization (shared with other hooks)
   tests/
-    test-scoring.mjs            # 57 unit tests
-    test-edge-cases.mjs         # 52 edge case + regression tests
+    test-scoring.mjs              # 57 unit tests
+    test-edge-cases.mjs           # 52 edge case + regression tests
+    test-hwm-integration.mjs      # 13 subprocess tests for HWM path
+    test-extraction-patterns.mjs  # 15 tests for imperative-extraction scoring
+    test-ceiling-mode.mjs         # 9 tests for active-ceiling semantics
+    test-safety-modifiers.mjs     # 36 adversarial tests for safety-guard modifiers
   docs/
-    neurotokens.md              # Policy document for Claude to interpret recommendations
-    orchestrator-patch.md       # Dispatch section for orchestrator agents
-  install.sh                    # Deployment script
+    neurotokens.md                # Policy document for Claude to interpret recommendations
+    orchestrator-patch.md         # Dispatch section for orchestrator agents
+    ADR-001-ceiling-rule.md       # Design rationale for floor→ceiling opt-in shift
+  CHANGELOG.md                    # Version history
+  install.sh                      # Deployment script
 ```
 
 ## Limitations
