@@ -197,6 +197,7 @@ const MUTATING_VERBS = [
   'change',
   'update',
   'disable',
+  'enable',
   'add',
   'create',
   'insert',
@@ -210,6 +211,21 @@ const MUTATING_VERBS = [
   'merge',
   'migrate',
   'truncate',
+  // v1.1.0: expanded for ceiling-mode safety — auth/deploy verbs that were
+  // missing caused modifier detection to silently fail on real prompts
+  // ("reset my token", "rotate keys", "ship to prod").
+  'reset',
+  'rotate',
+  'revoke',
+  'grant',
+  'ship',
+  'promote',
+  'publish',
+  'release',
+  'rollout',
+  'install',
+  'uninstall',
+  'configure',
 ];
 
 
@@ -472,26 +488,37 @@ export function computeModifiers(normalizedText) {
   // ── Escalation triggers ─────────────────────────────────────────
 
   // Auth/RLS + mutating verb
-  const hasAuth = /\b(auth|rls|row level security|permission|policy)\b/.test(normalizedText);
+  // Regex expanded for v1.1.0 ceiling-mode safety: auth-adjacent vocabulary
+  // (jwt, oauth, rbac, password, session, credential, login, signup) must fire
+  // +auth so ceiling mode blocks downgrade on real-world auth changes.
+  const hasAuth = /\b(auth|rls|row level security|permission|policy|jwt|oauth|rbac|password|session token|credential|login|signup|access control)\b/.test(normalizedText);
   if (hasAuth && isMutating) {
     escalation++;
     mods.push('+auth');
   }
 
-  // Deploy/push/merge + production context (without dampening)
-  // Guard: project-organization contexts (extract, split, separate, etc.)
-  // use "merge/push" + "main" in a restructuring sense, not a deploy sense
-  const hasDeployAction = /\b(deploy|push|merge)\b/.test(normalizedText);
-  const hasProdTarget = /\b(production|prod|main|live)\b/.test(normalizedText);
+  // Deploy/push/merge/ship/promote/release + production context (without dampening).
+  // Guard: project-organization contexts (extract, split, separate, etc.) use
+  // "merge/push" + "main" in a restructuring sense, not a deploy sense.
+  // v1.1.0: expanded action verbs (ship, promote, release, publish, rollout) and
+  // target keywords (edge function, lambda) to catch serverless deploys.
+  const hasDeployAction = /\b(deploy|push|merge|ship|promote|release|publish|rollout)\b/.test(normalizedText);
+  const hasProdTarget = /\b(production|prod|main|live|edge function|lambda|cloud function|worker)\b/.test(normalizedText);
   const isDampened = contextDampening(normalizedText) < 0;
   const isProjectOrg = EXTRACTION_PATTERNS.some(p => p.test(normalizedText));
-  if (hasDeployAction && hasProdTarget && !isDampened && !isProjectOrg) {
+  // Unambiguous deploy targets (production/prod/live/serverless) override the
+  // project-org guard — "promote staging to production" must fire +deploy even
+  // though Agent A's extraction patterns match "promote X to Y".
+  const hasClearDeployTarget = /\b(production|prod|live|edge function|lambda|cloud function|worker)\b/.test(normalizedText);
+  if (hasDeployAction && hasProdTarget && !isDampened && (!isProjectOrg || hasClearDeployTarget)) {
     escalation++;
     mods.push('+deploy');
   }
 
   // Financial keywords + mutating verb
-  const hasFinance = /\b(stripe|payment|billing|invoice|credit card|refund|charge)\b/.test(normalizedText);
+  // v1.1.0: expanded to catch pricing/subscription/plan/checkout/revenue — common
+  // SaaS billing surfaces that must block ceiling-mode downgrade.
+  const hasFinance = /\b(stripe|payment|billing|invoice|credit card|refund|charge|pricing|subscription|checkout|revenue|paywall|tier)\b/.test(normalizedText);
   if (hasFinance && isMutating) {
     escalation++;
     mods.push('+finance');

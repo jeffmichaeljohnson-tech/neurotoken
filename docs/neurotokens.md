@@ -82,14 +82,15 @@ The `(downgrade OK from X)` suffix signals to the orchestrator that dispatching 
 
 ### Safety guards
 
-Downgrade permission is **never** emitted when any of the following modifiers fire during scoring:
+Downgrade permission is **never** emitted under any of these conditions:
 
 - **`+auth`** -- authentication or authorization logic
 - **`+deploy`** -- deployment or infrastructure changes
 - **`+finance`** -- financial data or transactions
-- **`+production`** -- production environment modifications
+- **`+cross-project`** -- work spanning multiple projects (coordination risk)
+- **`S=3`** -- critical-stakes scoring (covers production mutations like `delete from prod` that fall outside modifier detection)
 
-When any of these modifiers are present, the annotation locks to the agent's configured tier regardless of raw C/S scores. This prevents cost optimization from overriding safety on high-stakes operations.
+When any of these fire, the annotation omits the `(downgrade OK from X)` suffix and behaves identically to floor-rule mode. This prevents cost optimization from overriding safety on high-stakes operations.
 
 ### Orchestrator interpretation
 

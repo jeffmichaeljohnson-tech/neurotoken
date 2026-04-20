@@ -18,14 +18,15 @@ Add `active-ceiling` as a new opt-in mode via `NEUROTOKEN_MODE=active-ceiling`. 
 
 The floor rule remains the default behavior. Existing modes (`shadow`, `active`, `off`) are unchanged. This is a fully backwards-compatible addition.
 
-Ceiling mode enforces strict safety guards: downgrade permission is never emitted when any of the following modifiers fire during scoring:
+Ceiling mode enforces strict safety guards: downgrade permission is never emitted when any of the following fire during scoring:
 
 - `+auth` -- authentication or authorization logic
 - `+deploy` -- deployment or infrastructure changes
 - `+finance` -- financial data or transactions
-- `+production` -- production environment modifications
+- `+cross-project` -- work spanning multiple projects (coordination risk)
+- `S=3` -- critical-stakes scoring (catches production mutations like `delete from prod` that fall outside modifier detection)
 
-When any of these modifiers are present, the annotation locks to the agent's configured tier regardless of the raw C/S scores.
+When any of these fire, the annotation omits the downgrade suffix and behaves identically to floor-rule mode.
 
 ## Consequences
 
