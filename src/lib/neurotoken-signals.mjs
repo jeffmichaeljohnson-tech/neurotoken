@@ -274,12 +274,40 @@ export function scoreDimension(normalizedText, signals) {
   return score;
 }
 
+const EXTRACTION_PATTERNS = [
+  /\bmake\b.{1,40}\bindependent\b/,
+  /\bmake\b.{1,40}\bstandalone\b/,
+  /\bextract\b.{1,40}\binto\b/,
+  /\bextract\b\s+(?:the\s+)?\w+/,
+  /\bmove\b.{1,40}\brepo\b/,
+  /\bmove\b.{1,40}\bits own\b/,
+  /\bmigrate\b.{1,40}\bto\b/,
+  /\brefactor\b.{1,40}\binto\b/,
+  /\brefactor\b.{1,40}\bto\b/,
+  /\bsplit\b.{1,40}\binto\b/,
+  /\bsplit\b.{1,40}\bout\b/,
+  /\bseparate\b.{1,40}\bfrom\b/,
+  /\bseparate\b.{1,40}\binto\b/,
+  /\bpromote\b.{1,40}\bto\b/,
+  /\bmerge\b.{1,40}\binto\b.{1,40}\b(package|module|project|repo|codebase|monorepo)\b/,
+];
+
 /**
  * Compute structural bonus points for complexity.
- * Detects multi-file references, concept density, and multi-step instructions.
+ * Detects multi-file references, concept density, multi-step instructions,
+ * and imperative extraction patterns (terse architectural prompts).
  */
 export function structuralBonus(normalizedText) {
   let bonus = 0;
+
+  // Imperative extraction (+5): terse prompts that imply architectural work
+  // Needs to reach C=2 bucket (threshold 5) to avoid under-routing to haiku
+  for (const pattern of EXTRACTION_PATTERNS) {
+    if (pattern.test(normalizedText)) {
+      bonus += 5;
+      break;
+    }
+  }
 
   // Multi-file (+3): detect 2+ unique file paths
   const filePathPattern = /(?:src|app|lib|components)\/[\w./-]+|[\w/-]+\.(?:ts|tsx|mjs|jsx|js|py|swift|rs|go|sql)\b/g;
@@ -451,10 +479,13 @@ export function computeModifiers(normalizedText) {
   }
 
   // Deploy/push/merge + production context (without dampening)
+  // Guard: project-organization contexts (extract, split, separate, etc.)
+  // use "merge/push" + "main" in a restructuring sense, not a deploy sense
   const hasDeployAction = /\b(deploy|push|merge)\b/.test(normalizedText);
   const hasProdTarget = /\b(production|prod|main|live)\b/.test(normalizedText);
   const isDampened = contextDampening(normalizedText) < 0;
-  if (hasDeployAction && hasProdTarget && !isDampened) {
+  const isProjectOrg = EXTRACTION_PATTERNS.some(p => p.test(normalizedText));
+  if (hasDeployAction && hasProdTarget && !isDampened && !isProjectOrg) {
     escalation++;
     mods.push('+deploy');
   }
