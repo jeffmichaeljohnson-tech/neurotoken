@@ -4,7 +4,7 @@
   "description": "Adaptive thinking allocation for Claude Code — scores prompts on complexity and stakes to recommend model/effort tiers",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/test-scoring.mjs tests/test-edge-cases.mjs"
+    "test": "node --test tests/test-scoring.mjs tests/test-edge-cases.mjs tests/test-hwm-integration.mjs"
   },
   "keywords": [
     "claude-code",
