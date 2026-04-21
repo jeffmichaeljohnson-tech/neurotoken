@@ -131,7 +131,7 @@ Your orchestrator agent reads this and dispatches to a lower-tier subagent. **Do
 npm test
 ```
 
-183 tests across 29 suites covering bucket math, matrix constants, scoring, verb detection, context dampening, modifiers, user overrides, edge cases, HWM integration, imperative-extraction patterns, ceiling-mode semantics, and adversarial safety-modifier detection. Zero external dependencies — uses Node.js built-in test runner.
+183 tests across 33 suites (181 passing, 2 skipped as documented known gaps) covering bucket math, matrix constants, scoring, verb detection, context dampening, modifiers, user overrides, edge cases, HWM integration, imperative-extraction patterns, ceiling-mode semantics, and adversarial safety-modifier detection. Zero external dependencies — uses Node.js built-in test runner.
 
 ## Architecture
 
@@ -148,7 +148,7 @@ neurotoken/
     test-edge-cases.mjs           # 52 edge case + regression tests
     test-hwm-integration.mjs      # 13 subprocess tests for HWM path
     test-extraction-patterns.mjs  # 15 tests for imperative-extraction scoring
-    test-ceiling-mode.mjs         # 9 tests for active-ceiling semantics
+    test-ceiling-mode.mjs         # 10 tests for active-ceiling semantics
     test-safety-modifiers.mjs     # 36 adversarial tests for safety-guard modifiers
   docs/
     neurotokens.md                # Policy document for Claude to interpret recommendations
