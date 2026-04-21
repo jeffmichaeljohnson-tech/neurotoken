@@ -25,7 +25,7 @@ const CEILING_MODS = new Set(['+auth', '+deploy', '+finance', '+cross-project'])
 
 try {
   // Read and validate input
-  const { prompt } = JSON.parse(readFileSync('/dev/stdin', 'utf8'));
+  const { prompt } = JSON.parse(readFileSync(0, 'utf8'));
   if (!prompt || prompt.length < 3) process.exit(0);
   const text = normalize(prompt);
 
