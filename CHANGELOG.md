@@ -43,7 +43,7 @@ This release is **fully backwards compatible**. Existing installations with `NEU
 
 - Two natural-language modifier gaps remain (skipped tests document them): `"modify who can see private prayers"` doesn't fire `+auth` (no keyword in the access-control description), and `"cut a release"` doesn't fire `+deploy` (no keyword match). Both can be worked around by using more explicit vocabulary.
 
-## [1.0.0] - 2026-04-XX
+## [1.0.0] - 2026-04-12
 
 ### Added
 

@@ -139,7 +139,7 @@ try {
 
 } catch (err) {
   // Crash resilience: never block the user's prompt
-  if (mode === 'active') {
+  if (mode === 'active' || mode === 'active-ceiling') {
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
